@@ -7,7 +7,7 @@ on:
 
 jobs:
   run:
-    runs-on: ubuntu-22.04   # jammy is fully supported by Playwright installers
+    runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
 
@@ -21,7 +21,6 @@ jobs:
           python -m pip install --upgrade pip
           pip install pandas gspread gspread-dataframe google-auth playwright
 
-      # Install Playwright browsers + system deps (supported on 22.04)
       - name: Install Playwright browsers and deps
         run: |
           python -m playwright install --with-deps chromium
@@ -29,5 +28,20 @@ jobs:
       - name: Run scraper
         env:
           GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
+          # You can tweak these without editing code:
+          SHEET_NAME: Gold Prices (MMTC-PAMP)
+          SHEET_TAB: Daily
+          PAGE_TIMEOUT_MS: "90000"
+          HEADLESS: "true"
         run: |
           python gold_scrape_to_sheet.py
+
+      # If something failed, upload page screenshot & HTML for diagnosis
+      - name: Upload debug artifacts (on failure)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: debug-snapshots
+          path: |
+            page.png
+            page.html
