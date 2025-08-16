@@ -1,14 +1,8 @@
 import os, json, datetime as dt, sys
 import pandas as pd
 
-# --- Selenium ---
-from selenium import webdriver
-from selenium.webdriver.common.by import By
-from selenium.webdriver.chrome.options import Options
-from selenium.webdriver.chrome.service import Service
-from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
-from webdriver_manager.chrome import ChromeDriverManager
+# --- Playwright (no driver mismatch) ---
+from playwright.sync_api import sync_playwright
 
 # --- Google Sheets ---
 import gspread
@@ -44,60 +38,59 @@ def open_or_create_sheet(gc, spreadsheet_name, worksheet_name):
         ws = sh.add_worksheet(title=worksheet_name, rows="100", cols="26")
     return sh, ws
 
-# ---------- Selenium driver ----------
-def new_driver():
-    opts = Options()
-    opts.add_argument("--headless=new")
-    opts.add_argument("--disable-gpu")
-    opts.add_argument("--no-sandbox")
-    opts.add_argument("--window-size=1440,1024")
-    opts.add_argument("--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64)")
-
-    if os.getenv("CHROME_BIN"):
-        opts.binary_location = os.getenv("CHROME_BIN")
-
-    # Force webdriver-manager to install the matching ChromeDriver
-    driver_path = ChromeDriverManager().install()
-    service = Service(driver_path)
-
-    return webdriver.Chrome(service=service, options=opts)
-
-# ---------- Scrape ----------
-def scrape(timeout=45) -> pd.DataFrame:
-    log("Starting headless Chrome…")
-    driver = new_driver()
-    try:
-        log(f"Opening {URL}")
-        driver.get(URL)
-
-        WebDriverWait(driver, timeout).until(
-            EC.presence_of_all_elements_located((By.XPATH, '//div[contains(@class,"MuiBox-root")]//p'))
+# ---------- Scrape with Playwright ----------
+def scrape(timeout_ms=45000) -> pd.DataFrame:
+    log("Launching Chromium via Playwright…")
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=True)
+        context = browser.new_context(
+            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                       "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
         )
+        page = context.new_page()
+        log(f"Opening {URL}")
+        page.goto(URL, wait_until="networkidle", timeout=timeout_ms)
 
-        cards = driver.find_elements(By.XPATH, '//div[contains(@class,"MuiBox-root") and .//p]')
-        if not cards:
-            cards = driver.find_elements(By.XPATH, '//div[contains(@class,"MuiBox-root")]')
+        # Wait until any price with ₹ is visible
+        page.wait_for_selector("xpath=//*[contains(text(),'₹')]", timeout=timeout_ms)
+
+        # Grab price nodes, then walk up to the nearest card to find the product name
+        price_nodes = page.locator("xpath=//*[contains(text(),'₹')]")
+        count = price_nodes.count()
 
         rows = []
-        for c in cards:
+        for i in range(count):
             try:
-                name_el = c.find_element(By.XPATH, './/p')
-                price_el = c.find_element(By.XPATH, './/*[contains(text(),"₹")]')
-                name = name_el.text.strip()
-                price = price_el.text.strip()
-                if name and price:
-                    rows.append([name, price])
+                price_el = price_nodes.nth(i)
+                # Nearest parent card (Material UI patterns)
+                card = price_el.locator("xpath=ancestor::div[contains(@class,'MuiBox-root')][1]")
+
+                # Product name heuristic: first <p> inside the card
+                name_el = card.locator("xpath=.//p").first
+                if name_el.count() == 0:
+                    continue
+
+                name = name_el.inner_text().strip()
+                price = price_el.inner_text().strip()
+
+                # Basic sanity checks
+                if not name or "₹" not in price:
+                    continue
+
+                rows.append([name, price])
             except Exception:
                 continue
 
-        df = pd.DataFrame(rows, columns=["Product Name", "Price"]).drop_duplicates(subset=["Product Name"])
-        if not df.empty:
-            df.insert(0, "Date", dt.datetime.now().strftime("%Y-%m-%d"))
-        log(f"Scraped {len(df)} rows.")
-        return df
-    finally:
-        driver.quit()
-        log("Closed browser.")
+        context.close()
+        browser.close()
+
+    # Dedup by product name; add date
+    df = pd.DataFrame(rows, columns=["Product Name", "Price"]).drop_duplicates(subset=["Product Name"])
+    if not df.empty:
+        df.insert(0, "Date", dt.datetime.now().strftime("%Y-%m-%d"))
+
+    log(f"Scraped {len(df)} rows.")
+    return df
 
 # ---------- Write/Upsert to Google Sheet ----------
 def upsert_sheet(df_today: pd.DataFrame):
@@ -114,6 +107,7 @@ def upsert_sheet(df_today: pd.DataFrame):
         set_with_dataframe(ws, df_today, include_index=False, include_column_header=True, resize=True)
         return
 
+    # Ensure columns exist
     for col in ["Date", "Product Name", "Price"]:
         if col not in existing.columns:
             existing[col] = pd.NA
