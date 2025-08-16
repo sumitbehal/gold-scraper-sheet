@@ -7,7 +7,7 @@ on:
 
 jobs:
   run:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04   # jammy is fully supported by Playwright installers
     steps:
       - uses: actions/checkout@v4
 
@@ -16,17 +16,15 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Install dependencies
+      - name: Install Python dependencies
         run: |
           python -m pip install --upgrade pip
           pip install pandas gspread gspread-dataframe google-auth playwright
 
-      # Installs browsers & OS deps that Playwright needs (no driver mismatches ever)
-      - name: Install Playwright browsers
-        uses: microsoft/playwright-github-action@v1
-        with:
-          with-deps: true
-          # browser: chromium  # default includes all; uncomment to limit
+      # Install Playwright browsers + system deps (supported on 22.04)
+      - name: Install Playwright browsers and deps
+        run: |
+          python -m playwright install --with-deps chromium
 
       - name: Run scraper
         env:
