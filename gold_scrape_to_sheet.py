@@ -51,10 +51,8 @@ def scrape(timeout_ms=45000) -> pd.DataFrame:
         log(f"Opening {URL}")
         page.goto(URL, wait_until="networkidle", timeout=timeout_ms)
 
-        # Wait until any price with ₹ is visible
         page.wait_for_selector("xpath=//*[contains(text(),'₹')]", timeout=timeout_ms)
 
-        # Grab price nodes, then walk up to the nearest card to find the product name
         price_nodes = page.locator("xpath=//*[contains(text(),'₹')]")
         count = price_nodes.count()
 
@@ -62,29 +60,20 @@ def scrape(timeout_ms=45000) -> pd.DataFrame:
         for i in range(count):
             try:
                 price_el = price_nodes.nth(i)
-                # Nearest parent card (Material UI patterns)
                 card = price_el.locator("xpath=ancestor::div[contains(@class,'MuiBox-root')][1]")
-
-                # Product name heuristic: first <p> inside the card
                 name_el = card.locator("xpath=.//p").first
                 if name_el.count() == 0:
                     continue
-
                 name = name_el.inner_text().strip()
                 price = price_el.inner_text().strip()
-
-                # Basic sanity checks
-                if not name or "₹" not in price:
-                    continue
-
-                rows.append([name, price])
+                if name and ("₹" in price):
+                    rows.append([name, price])
             except Exception:
                 continue
 
         context.close()
         browser.close()
 
-    # Dedup by product name; add date
     df = pd.DataFrame(rows, columns=["Product Name", "Price"]).drop_duplicates(subset=["Product Name"])
     if not df.empty:
         df.insert(0, "Date", dt.datetime.now().strftime("%Y-%m-%d"))
@@ -107,7 +96,6 @@ def upsert_sheet(df_today: pd.DataFrame):
         set_with_dataframe(ws, df_today, include_index=False, include_column_header=True, resize=True)
         return
 
-    # Ensure columns exist
     for col in ["Date", "Product Name", "Price"]:
         if col not in existing.columns:
             existing[col] = pd.NA
