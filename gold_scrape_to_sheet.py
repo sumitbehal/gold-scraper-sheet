@@ -1,4 +1,4 @@
-import os, json, datetime as dt, sys, time
+import os, json, datetime as dt, sys
 import pandas as pd
 
 # --- Selenium ---
@@ -16,7 +16,7 @@ from google.oauth2.service_account import Credentials
 from gspread_dataframe import set_with_dataframe, get_as_dataframe
 
 # ================== CONFIG ==================
-SPREADSHEET_NAME = os.getenv("SHEET_NAME", "Gold Prices (MMTC-PAMP)")  # you can override via repo → Actions → Variables
+SPREADSHEET_NAME = os.getenv("SHEET_NAME", "Gold Prices (MMTC-PAMP)")
 WORKSHEET_NAME  = os.getenv("SHEET_TAB",  "Daily")
 URL = "https://www.mmtcpamp.com/shop/gold"
 SCOPES = ["https://www.googleapis.com/auth/spreadsheets"]
@@ -52,12 +52,14 @@ def new_driver():
     opts.add_argument("--no-sandbox")
     opts.add_argument("--window-size=1440,1024")
     opts.add_argument("--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64)")
-    # If setup-chrome provided a custom binary path
+
     if os.getenv("CHROME_BIN"):
         opts.binary_location = os.getenv("CHROME_BIN")
 
-    # Auto-install a matching chromedriver for the installed Chrome
-    service = Service(ChromeDriverManager().install())
+    # Force webdriver-manager to install the matching ChromeDriver
+    driver_path = ChromeDriverManager().install()
+    service = Service(driver_path)
+
     return webdriver.Chrome(service=service, options=opts)
 
 # ---------- Scrape ----------
@@ -68,12 +70,10 @@ def scrape(timeout=45) -> pd.DataFrame:
         log(f"Opening {URL}")
         driver.get(URL)
 
-        # Wait for content to appear
         WebDriverWait(driver, timeout).until(
             EC.presence_of_all_elements_located((By.XPATH, '//div[contains(@class,"MuiBox-root")]//p'))
         )
 
-        # Primary card search (tight); fallback (broader) if needed
         cards = driver.find_elements(By.XPATH, '//div[contains(@class,"MuiBox-root") and .//p]')
         if not cards:
             cards = driver.find_elements(By.XPATH, '//div[contains(@class,"MuiBox-root")]')
@@ -114,7 +114,6 @@ def upsert_sheet(df_today: pd.DataFrame):
         set_with_dataframe(ws, df_today, include_index=False, include_column_header=True, resize=True)
         return
 
-    # Ensure the three columns exist and are ordered
     for col in ["Date", "Product Name", "Price"]:
         if col not in existing.columns:
             existing[col] = pd.NA
