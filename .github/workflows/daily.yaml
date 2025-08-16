@@ -25,6 +25,10 @@ jobs:
           python -m pip install --upgrade pip
           pip install pandas gspread gspread-dataframe google-auth selenium webdriver-manager
 
+      - name: Remove old chromedriver
+        run: |
+          sudo rm -f /usr/bin/chromedriver || true
+
       - name: Run scraper
         env:
           GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
